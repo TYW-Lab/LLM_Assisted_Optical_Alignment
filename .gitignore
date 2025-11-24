@@ -3,7 +3,6 @@
 *.pyc
 *.md
 *.csv
-/Optical_environment/
 *.csv
 *.mp4
 /test.py
