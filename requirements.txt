@@ -1,0 +1,13 @@
+# Core simulation and alignment dependencies
+optiland==0.5.6
+nodeology
+torch
+numpy
+pandas
+matplotlib
+opencv-python
+gymnasium
+nodeology
+python-dotenv
+wandb
+vtk

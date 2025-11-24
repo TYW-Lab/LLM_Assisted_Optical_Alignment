@@ -13,7 +13,7 @@ And the reset logic is:
 (It's different from return to base angles and then add random actions)
 """
 
-class OptilandAlignmentEnv:
+class OptilandAlignmentEnvSimple:
     """
     Optiland-based optical alignment environment.
     Observation: spot displacements on two detectors [m2dx, m2dy, hit_m2, p1dx, p1dy, p2dx, p2dy, 
@@ -33,9 +33,9 @@ class OptilandAlignmentEnv:
         pinhole_aperture=[0.5, 0.0],
         detector_aperture=[50.0, 50.0],
         mirror1_position=np.array([0.0, 0.0, 100.0]),
-        mirror2_position=np.array([0.0, -100.0, 100.0]),
-        rotation_angles_mirror1=np.array([np.pi-np.pi/4, 0.0, 0.0]),
-        rotation_angles_mirror2=np.array([-np.pi/4, 0.0, 0.0]),
+        mirror2_position=np.array([0.0, -100.0, 0.0]),
+        rotation_angles_mirror1=np.array([np.pi-np.pi/8, 0.0, 0.0]),
+        rotation_angles_mirror2=np.array([-np.pi/8, 0.0, 0.0]),
         m2_a1_dist=70.0,
         p1_p2_dist=80.0,
         mirror2_detector=3,
@@ -47,8 +47,8 @@ class OptilandAlignmentEnv:
         res=(512, 512),
         num_rays=400,
         delta_angle_range=2.4*np.pi/180, #2.4
-        delta_mirror2_position=0, #10
-        delta_pinhole_distance=0, #20
+        delta_mirror2_position=5, #10
+        delta_pinhole_distance=5, #20
         target_position=(0.0, 0.0),
         threshold=0.95, # Power threshold for success
         log_every_n_episodes=1,  # log every N episodes
@@ -240,18 +240,14 @@ class OptilandAlignmentEnv:
     
     def _get_observation(self):
         """Get the current observation."""
-        mirror2_dx, mirror2_dy = self._get_centroid_displacement(detector_surface=self.mirror2_detector)
+        mirror2_dx, mirror2_dy = self._get_centroid_displacement(detector_surface=3)
         dist_beam_to_mirror2 = np.sqrt(mirror2_dx**2 + mirror2_dy**2) if not np.isnan(mirror2_dx) and not np.isnan(mirror2_dy) else np.nan
         
         if dist_beam_to_mirror2 > self.mirror_aperture[0] or (np.isnan(mirror2_dx) or np.isnan(mirror2_dy)):
             obs = np.array([0.0, np.nan, np.nan, np.nan, np.nan])
         else:
-            # Enlarge pinhole 1 size to max in order to increase space of observation
-            self.optical_sys.set_pinhole_size(enlarge=self.change_pinhole)
-            pinhole1_dx, pinhole1_dy = self._get_centroid_displacement(detector_surface=self.pinhole1_detector)
-            pinhole2_dx, pinhole2_dy = self._get_centroid_displacement(detector_surface=self.pinhole2_detector)
-            # Change pinhole 1 to original size
-            self.optical_sys.set_pinhole_size(enlarge=False)
+            pinhole1_dx, pinhole1_dy = self._get_centroid_displacement(detector_surface=5)
+            pinhole2_dx, pinhole2_dy = self._get_centroid_displacement(detector_surface=8)
 
             obs = np.array([1.0, pinhole1_dx, pinhole1_dy, pinhole2_dx, pinhole2_dy], dtype=np.float32)
             obs = np.clip(obs, self.obs_low, self.obs_high)
@@ -271,7 +267,7 @@ class OptilandAlignmentEnv:
 
         reward = reward_mirror_angles + reward_pinhole_1_pass + reward_pinhole_2_pass + reward_steps - 1.0
 
-        return reward, 0
+        return reward
     
     def _is_terminated(self, obs):
         """Check termination conditions."""
@@ -318,8 +314,8 @@ class OptilandAlignmentEnv:
             create_success = self._create_optical_system(
                 mirror1_pos, mirror2_pos, angles_m1, angles_m2, m2_a1_dist, p1_p2_dist
             )
-        initial_angles = [[rx1,ry1,rx2,ry2]]
         
+        initial_angles = [[rx1,ry1,rx2,ry2]]
         # Reset envirenment
         rx1, ry1 = self.rotation_angles_mirror1_base[0], self.rotation_angles_mirror1_base[1]
         rx2, ry2 = self.rotation_angles_mirror2_base[0], self.rotation_angles_mirror2_base[1]
@@ -347,9 +343,6 @@ class OptilandAlignmentEnv:
 
         # Get initial observation
         obs = self._get_observation().astype(np.float32)
-        act_mask = np.where(np.abs(self.action_acc) < 1.0, 0.0, self.action_acc)
-        obs = np.concatenate((obs, act_mask), axis=1)
-        self.previous_obs = obs
 
 
         self.episode_info = {
@@ -390,15 +383,13 @@ class OptilandAlignmentEnv:
         }
         # step == 0
         action = 0.1 * (2 * np.random.rand(1, 4) - 1).astype(np.float32)
-        total_obs, _, _, _, _ = self.step(action, first_step = True)
-        return total_obs
+        obs, *_ = self.step(action, first_step = True)
+        return obs
     
     def step(self, action, first_step=False):
         """Take one environment step and log the action."""
         # action range:[-4,4] degrees
-        action_ = np.copy(action).astype(np.float32)
-        #action = np.clip(action, self.action_low, self.action_high).astype(np.float32)
-        #delta_angles = np.deg2rad(action * 4) * 0.1
+        action = np.copy(action).astype(np.float32)
         self.action_acc = np.clip(self.action_acc + action, self.action_low, self.action_high)
 
         rx1 = np.deg2rad(self.action_acc[0][0] * 4) + self.rotation_angles_mirror1_base[0]
@@ -412,13 +403,8 @@ class OptilandAlignmentEnv:
         self.current_angles = [current_angles]
         
         obs = self._get_observation().astype(np.float32)
-        act_mask = np.where(np.abs(self.action_acc) < 1.0, 0.0, self.action_acc)
-
-        obs_ = np.concatenate((obs, act_mask), axis=1)
-        total_obs = np.concatenate((self.previous_obs, obs_, action_), axis=1)
-        self.previous_obs = obs_
         self.T += 1 if not first_step else 0
-        reward, rs = self._compute_reward(action, obs)
+        reward = self._compute_reward(action, obs)
     
         self.acc_reward += reward
         terminated = self._is_terminated(obs)
@@ -462,7 +448,7 @@ class OptilandAlignmentEnv:
                 self.logger.flush_all()
                 self.logger.finish_episode()
         
-        return total_obs, reward, rs, terminated, truncated
+        return obs, reward, terminated, truncated
     
     def goal(self, pinhole_index=1):
         if pinhole_index == 1:
@@ -519,9 +505,8 @@ class OptilandAlignmentEnv:
     
     def select_configuration(self, conf_type=0):
         """Select one of the four valid configurations."""
-        conf_type = 0
         M1_angle = [180-45, 180-45, 180+45, 180+45]
-        M2_angle = [-45, 180+45, 360+45, 180-45]
+        M2_angle = [360-45, 180+45, 360+45, 180-45]
         self.rotation_angles_mirror1_base = np.array([M1_angle[conf_type], 0.0, 0.0]) * np.pi / 180.0
         self.rotation_angles_mirror2_base = np.array([M2_angle[conf_type], 0.0, 0.0]) * np.pi / 180.0
         #mirror1_position = np.array([0.0, 0.0, 100.0]),
@@ -529,10 +514,11 @@ class OptilandAlignmentEnv:
         #self.mirror1_position_base = np.array(mirror1_position)
         self.mirror2_position_base = np.array([0.0, M2_pos[conf_type], 100.0])
         return
+    
     def print_status(self):
         """Render the current state to stdout."""
         print(f"Step {self.T}:")
-        print(f"  Angles (deg): {np.rad2deg(self.current_angles)}")
+        print(f"  Angles (deg): {self.current_angles}")
         print(f"  Distance mirror2: {np.sqrt(self.last_displacement[0][0]**2 + self.last_displacement[0][1]**2):.4f} mm")
         print(f"  Distance pinhole1: {np.sqrt(self.last_displacement[0][3]**2 + self.last_displacement[0][4]**2):.4f} mm")
         print(f"  Distance pinhole2: {np.sqrt(self.last_displacement[0][5]**2 + self.last_displacement[0][6]**2):.4f} mm")
@@ -543,73 +529,3 @@ class OptilandAlignmentEnv:
         self.optical_sys = None
 
 
-# ============ Example usage ============
-if __name__ == "__main__":
-
-    log_config = {
-            "actions": [
-                "episode_id", "step",
-                "action_rx1", "action_ry1", "action_rx2", "action_ry2",
-                "angle_rx1", "angle_ry1", "angle_rx2", "angle_ry2",
-                "obs_dx1", "obs_dy1", "obs_dx2", "obs_dy2",
-                "reward", "distance_pinhole1", "distance_pinhole2",
-                "terminated", "truncated"
-            ],
-            "episodes": [
-                "episode_id",
-                "init_rx1", "init_ry1", "init_rx2", "init_ry2",
-                "init_dx1", "init_dy1", "init_dx2", "init_dy2",
-                "mirror1_x", "mirror1_y", "mirror1_z",
-                "mirror2_x", "mirror2_y", "mirror2_z",
-                "m2_p1_dist", "p1_p2_dist",
-                "total_steps", "goal_reached",
-                "final_distance_pinhole1", "final_distance_pinhole2"
-            ]
-        }
-    
-    wandb_project = "optical-alignment-demo"
-    env = OptilandAlignmentEnv(
-        beam_size=1.0,  # r mm
-        wavelength=0.78,
-        detector_aperture=[50.0, 50.0],
-        res=(512, 512),
-        num_rays=512,
-        max_step=16,
-        delta_angle_range=2.4,
-        log_config=log_config,
-        log_dir='./experiment_logs_test',
-        use_wandb=False,
-        wandb_mode="offline",  # Save logs locally, sync later
-        wandb_project=wandb_project,
-        wandb_group_name="test5",
-        wandb_config={"algorithm": "random", "experiment": "offline-mode"},
-    )
-    
-    print("=" * 50)
-    print("Environment Test with Logger")
-    print("=" * 50)
-    
-    # Run 3 episodes
-    for ep in range(3):
-        obs = env.reset(seed=42+ep)
-        print(f"\n{'='*50}")
-        print(f"Episode {ep + 1}")
-        print(f"{'='*50}")
-        # print(f"Initial angles: {info['angles']}")
-        
-        for step in range(600):
-            action = np.random.uniform(-0.4, 0.4, size=(1, 4)).astype(np.float32)
-            obs, reward, rs, terminated, truncated = env.step(action)
-            
-            # print(f"Step {step+1}: pinhole1={info['distance_pinhole1']:.4f} mm, "
-            #       f"pinhole2={info['distance_pinhole2']:.4f} mm, reward={reward:.2f}")
-            env.render()
-            
-            if terminated:
-                print("Aligned successfully!")
-                break
-            if truncated:
-                print("Reached max steps")
-                break
-    
-    env.close()
