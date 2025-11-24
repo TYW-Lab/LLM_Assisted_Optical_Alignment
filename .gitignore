@@ -1,0 +1,15 @@
+/experiment_logs/
+/logs/
+*.pyc
+*.md
+*.csv
+/Optical_environment/
+*.csv
+*.mp4
+/test.py
+.chainlit
+.files
+/.env
+/visualize.py
+/test.py
+*.log
